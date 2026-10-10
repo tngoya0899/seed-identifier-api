@@ -1,0 +1,14 @@
+                            precision    recall  f1-score   support
+
+        Endustri_Bitkileri     0.6667    0.2857    0.4000         7
+                  Sebzeler     0.6667    0.8000    0.7273        15
+             Sus_Bitkileri     1.0000    0.8000    0.8889         5
+                  Tahillar     0.9048    0.9048    0.9048        21
+Tibbi_ve_Aromatik_Bitkiler     1.0000    0.6667    0.8000         3
+             Yabanci_Otlar     0.6250    0.5000    0.5556        10
+             Yem_Bitkileri     0.6471    0.8462    0.7333        13
+ Yemeklik_Dane_Baklagiller     0.8000    0.8889    0.8421         9
+
+                  accuracy                         0.7590        83
+                 macro avg     0.7888    0.7115    0.7315        83
+              weighted avg     0.7654    0.7590    0.7497        83
