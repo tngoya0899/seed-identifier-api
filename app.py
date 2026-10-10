@@ -34,7 +34,7 @@ LABELS_PATH = 'models/class_labels.json'
 LIBRARY_PATH = 'models/seed_embeddings_library.pt'
 IMAGE_SIZE = (224, 224)
 
-device = torch.device("cpu")  # Bulutta CPU ortamında kararlı ve hafif çalışır
+device = torch.device("cpu")
 
 if not os.path.exists(LABELS_PATH) or not os.path.exists(MODEL_PATH) or not os.path.exists(LIBRARY_PATH):
     raise RuntimeError("Gerekli model veya kütüphane dosyaları eksik!")
@@ -43,7 +43,7 @@ with open(LABELS_PATH, 'r', encoding='utf-8') as f:
     class_labels = json.load(f)
 num_classes = len(class_labels)
 
-# Kategori Modeli
+# Kategori Sınıflandırıcı Modeli
 clf_model = models.mobilenet_v3_large(weights=None)
 in_features = clf_model.classifier[3].in_features
 clf_model.classifier[3] = nn.Linear(in_features, num_classes)
@@ -67,7 +67,7 @@ class FeatureExtractor(nn.Module):
 feature_extractor = FeatureExtractor(clf_model).to(device)
 feature_extractor.eval()
 
-# Referans Kütüphanesi
+# Referans Tohum Kütüphanesi
 library = torch.load(LIBRARY_PATH, map_location='cpu')
 
 transform = transforms.Compose([
@@ -93,12 +93,11 @@ async def predict_seed(file: UploadFile = File(...), top_k: int = 3):
         raise HTTPException(status_code=400, detail="Lütfen geçerli bir görsel yükleyin.")
 
     try:
-        # Gelen görseli bellekte oku
         image_bytes = await file.read()
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         tensor = transform(image).unsqueeze(0).to(device)
 
-        # 1. Aşama: Kategori Tespiti (Bilgi amaçlı yine hesaplanır)
+        # 1. Aşama: Kategori Tespiti
         with torch.no_grad():
             cat_outputs = clf_model(tensor)
             cat_probs = torch.nn.functional.softmax(cat_outputs, dim=1)[0]
@@ -108,22 +107,29 @@ async def predict_seed(file: UploadFile = File(...), top_k: int = 3):
         predicted_cat = class_labels[str(top_cat_idx[0].item())]
         confidence_pct = round(top_cat_prob[0].item() * 100, 2)
 
-        # 2. Aşama: EVRENSEL BENZERLİK ARAMASI (Kategori sınırlaması kaldırıldı)
-        all_embeddings = torch.stack([item['embedding'] for item in library])
-        similarities = torch.mv(all_embeddings, query_embedding)
-        
-        # En yüksek benzerlikli adayları al
-        # Tüm kütüphaneyi sıralayıp benzersiz türleri seçiyoruz:
-        top_scores, top_indices = torch.topk(similarities, len(library))
+        # 2. Aşama: HİYERARŞİK / KATEGORİ FİLTRELİ BENZERLİK ARAMASI
+        # Güven oranı %50'nin üzerindeyse arama yalnızca tahmin edilen kategoride yapılır
+        target_indices = [
+            i for i, item in enumerate(library)
+            if item.get('category') == predicted_cat
+        ]
 
-        # Çiftleyen türleri temizle (Deduplication) ve en iyi top_k adayı seç
+        # Eğer kategoride tohum bulunamazsa veya güven çok düşükse tüm kütüphaneyi tara
+        if not target_indices or confidence_pct < 50.0:
+            target_indices = list(range(len(library)))
+
+        selected_embeddings = torch.stack([library[i]['embedding'] for i in target_indices])
+        similarities = torch.mv(selected_embeddings, query_embedding)
+
+        top_scores, top_sub_indices = torch.topk(similarities, len(target_indices))
+
         seen_species = set()
         top_matches = []
         rank = 1
 
-        for i in range(len(top_indices)):
-            idx = top_indices[i].item()
-            item = library[idx]
+        for i in range(len(top_sub_indices)):
+            actual_idx = target_indices[top_sub_indices[i].item()]
+            item = library[actual_idx]
             spec_name = item['crop_name_tr']
 
             if spec_name in seen_species or spec_name == "Bilinmiyor":
@@ -144,7 +150,6 @@ async def predict_seed(file: UploadFile = File(...), top_k: int = 3):
             if len(top_matches) == top_k:
                 break
 
-        # Mobil uygulamanın kartlarda göstereceği temiz JSON yanıtı
         return {
             "success": True,
             "filename": file.filename,
