@@ -5,5 +5,7 @@ fastapi
 uvicorn
 python-multipart
 Pillow
+numpy
+opencv-python-headless
 pandas
 openpyxl
